@@ -29,6 +29,13 @@
 # a package installed on the build host can never be substituted for a pin.
 %bcond_without grpc
 
+# The libraries carry a RUNPATH into the private prefix.  That is the whole
+# point of the design -- the OTel stack is deliberately kept off the dynamic
+# linker's search path so it cannot shadow a system opentelemetry-cpp, and an
+# ld.so.conf.d drop-in would defeat that -- so the generic rpath check, which
+# rejects any RPATH outside the standard library directories, must not veto it.
+%global __brp_check_rpaths %{nil}
+
 # The private libraries live outside the dynamic linker's search path and are
 # reached through RPATH.  Keep them out of the global soname namespace, and do
 # not let RPM turn them into unresolvable dependencies of their consumers.
@@ -227,6 +234,12 @@ fi
 # Static archives are never shipped: the wrapper links the shared libraries.
 find %{buildroot}%{otel_prefix} -name '*.a' -delete
 
+# protobuf installs protoc and its upb code generators into the prefix.  They
+# are build-time tools -- everything that needed them ran during %%build, and
+# the only consumer of this stack (the C wrapper) resolves it through
+# pkg-config, not through protobuf's CMake targets -- so they are not shipped.
+rm -rf %{buildroot}%{otel_prefix}/bin
+
 # The private prefix is not on the linker's search path, so no ldconfig cache
 # entry is wanted; drop any leftover libtool archives too.
 find %{buildroot}%{otel_prefix} -name '*.la' -delete
@@ -244,6 +257,9 @@ find %{buildroot}%{otel_prefix} -name '*.la' -delete
 %{otel_libdir}/*.so
 %{otel_libdir}/cmake/
 %{otel_libdir}/pkgconfig/
+# rapidyaml and c4core install their CMake package and pkg-config files under
+# share/ rather than the libdir.
+%{otel_prefix}/share/
 
 %changelog
 * Fri Aug 21 2026 stevapple <stevapple2013@gmail.com> - 1.28.0-1

@@ -12,6 +12,13 @@
 %global otel_libdir     %{otel_prefix}/%{_lib}
 %global otel_includedir %{otel_prefix}/include
 
+# The libraries carry a RUNPATH into the private prefix.  That is the whole
+# point of the design -- the OTel stack is deliberately kept off the dynamic
+# linker's search path so it cannot shadow a system opentelemetry-cpp, and an
+# ld.so.conf.d drop-in would defeat that -- so the generic rpath check, which
+# rejects any RPATH outside the standard library directories, must not veto it.
+%global __brp_check_rpaths %{nil}
+
 # Same rationale as in opentelemetry-cpp-haproxy.spec: the private prefix is
 # outside the dynamic linker's search path and is reached through RPATH.
 %global __provides_exclude_from ^%{otel_libdir}/.*\\.so.*$
