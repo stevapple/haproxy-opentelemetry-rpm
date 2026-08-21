@@ -151,6 +151,15 @@ grep -q '^ryml=%{ryml_tag}$' third_party_release
 #     the same via the .monorepo marker in common.sh) so that a package
 #     installed on the build host cannot hijack the build.
 #
+# That last point is not theoretical.  nlohmann_json was missing from the
+# disable list at first, and because CMake searches CMAKE_INSTALL_PREFIX,
+# find_package() picked up the copy an *earlier build of this very package* had
+# left in %%{otel_prefix}.  The vendored one was then never built or installed,
+# so the resulting -devel package shipped SDK headers (the Zipkin and
+# Elasticsearch exporters) that #include <nlohmann/json.hpp> without shipping
+# that header -- and whether it happened at all depended on what was installed
+# on the build host.  Every vendored dependency must be listed here.
+#
 # Each vendored dependency is mapped with an explicit FETCHCONTENT_SOURCE_DIR_*
 # rather than by letting FetchContent guess <binary dir>/_deps/<name>-src:
 #
@@ -190,6 +199,7 @@ grep -q '^ryml=%{ryml_tag}$' third_party_release
     -DCMAKE_DISABLE_FIND_PACKAGE_gRPC=ON \
     -DCMAKE_DISABLE_FIND_PACKAGE_Protobuf=ON \
     -DCMAKE_DISABLE_FIND_PACKAGE_absl=ON \
+    -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON \
     -DBUILD_PACKAGE=ON \
     -DCURL_LIBRARY=%{_libdir}/libcurl.so \
     -DZLIB_LIBRARY=%{_libdir}/libz.so \
@@ -247,6 +257,21 @@ fi
 # Static archives are never shipped: the wrapper links the shared libraries.
 find %{buildroot}%{otel_prefix} -name '*.a' -delete
 
+# Some dependency versions put their CMake package and pkg-config files under
+# share/ rather than the libdir (rapidyaml does so from 0.11 on; 0.10 does
+# not).  Fold anything that lands there into the libdir so the packaged layout
+# is the same either way, and so %%files does not have to know which happened.
+if [ -d %{buildroot}%{otel_prefix}/share ]; then
+    for sub in cmake pkgconfig; do
+        if [ -d %{buildroot}%{otel_prefix}/share/$sub ]; then
+            mkdir -p %{buildroot}%{otel_libdir}/$sub
+            cp -a %{buildroot}%{otel_prefix}/share/$sub/. \
+                  %{buildroot}%{otel_libdir}/$sub/
+        fi
+    done
+    rm -rf %{buildroot}%{otel_prefix}/share
+fi
+
 # protobuf installs protoc and its upb code generators into the prefix.  They
 # are build-time tools -- everything that needed them ran during %%build, and
 # the only consumer of this stack (the C wrapper) resolves it through
@@ -270,9 +295,6 @@ find %{buildroot}%{otel_prefix} -name '*.la' -delete
 %{otel_libdir}/*.so
 %{otel_libdir}/cmake/
 %{otel_libdir}/pkgconfig/
-# rapidyaml and c4core install their CMake package and pkg-config files under
-# share/ rather than the libdir.
-%{otel_prefix}/share/
 
 %changelog
 * Fri Aug 21 2026 stevapple <stevapple2013@gmail.com> - 1.28.0-1
