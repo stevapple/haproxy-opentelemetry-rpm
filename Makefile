@@ -30,6 +30,9 @@ all: rpms
 # Parse each spec with the target dist macro set.  Catches syntax errors,
 # unbalanced conditionals and typos in macro names without needing sources.
 #
+# Comment lines are skipped: "%%{foo}" in a spec comment is the correct way to
+# write a literal, and rpmspec renders it as "%{foo}" in the output.
+#
 # Macros supplied by redhat-rpm-config and systemd-rpm-macros stay unexpanded
 # when this runs off-target (on a plain Fedora/Debian rpm, or in a container
 # without those packages).  They are not errors, so they are reported
@@ -44,7 +47,7 @@ lint:
 	    if ! rpmspec --define "dist .$(DIST_TAG)" -P "$$s" > "$$out" 2> "$$err"; then \
 	        sed 's/^/    /' "$$err"; rc=1; rm -f "$$out" "$$err"; continue; \
 	    fi; \
-	    unexpanded=$$(grep -oE '%\{[A-Za-z_][A-Za-z0-9_]*\}' "$$out" | sort -u); \
+	    unexpanded=$$(grep -vE '^[[:space:]]*#' "$$out" | grep -oE '%\{[A-Za-z_][A-Za-z0-9_]*\}' | sort -u); \
 	    unknown=$$(printf '%s\n' "$$unexpanded" | grep -vE '^%\{($(DISTRO_MACROS))\}$$' | grep . || true); \
 	    if [ -n "$$unknown" ]; then \
 	        echo "    ERROR: unknown macros left unexpanded:"; \
