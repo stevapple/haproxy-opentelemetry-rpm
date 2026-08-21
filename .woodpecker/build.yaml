@@ -17,7 +17,9 @@ steps:
   lint:
     image: *ubi_image
     commands:
-      - dnf -y install rpm-build rpmdevtools rpmlint make git
+      # rpmspec comes from rpm-build; rpmlint is deliberately absent -- it is
+      # not packaged in any UBI 10 repository, and `make lint` does not use it.
+      - dnf -y install rpm-build rpmdevtools make git
       - make lint
 
   vendor:

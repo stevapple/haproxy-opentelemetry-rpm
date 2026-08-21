@@ -26,9 +26,11 @@ jobs:
     container:
       image: registry.access.redhat.com/ubi10/ubi:latest
     steps:
-      # actions/checkout needs git and tar inside the container.
+      # actions/checkout needs git and tar inside the container.  rpmspec comes
+      # from rpm-build; rpmlint is deliberately absent -- it is not packaged in
+      # any UBI 10 repository, and `make lint` does not use it.
       - name: Install tooling
-        run: dnf -y install git tar rpm-build rpmdevtools rpmlint make
+        run: dnf -y install git tar rpm-build rpmdevtools make
 
       - uses: actions/checkout@v4
 
