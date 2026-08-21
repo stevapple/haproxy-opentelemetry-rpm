@@ -6,3 +6,4 @@
 SOURCES/*.tar.gz
 SOURCES/*.tar.zst
 SOURCES/*.part
+/artifacts-nogrpc/

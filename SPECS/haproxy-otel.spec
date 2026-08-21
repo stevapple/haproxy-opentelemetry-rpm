@@ -11,7 +11,12 @@
 #   branch:   rawhide
 #   commit:   11852b3685f34562a7302bfa46baa4df66c29967 ("Upgrade to 3.4.3")
 #
-# The entire delta against that spec is marked with "OTel delta:" comments.
+# The entire delta against that spec is marked with comments:
+#
+#   "OTel delta:"  -- what this package adds, i.e. the filter itself.
+#   "el10 delta:"  -- portability fixes where Fedora's assumptions do not hold
+#                     on RHEL 10.
+#
 # When rebasing onto a newer Fedora haproxy, re-apply only those hunks.
 #
 # WHY THIS REBUILDS HAPROXY
@@ -186,6 +191,17 @@ install -D -p -m 0644 %{SOURCE4} %{buildroot}%{_sysconfdir}/sysconfig/haproxy
 install -D -p -m 0644 %{SOURCE5} %{buildroot}%{_sysusersdir}/haproxy.conf
 install -p -D -m 0644 %{SOURCE6} %{buildroot}%{_mandir}/man1/halog.1
 mkdir -p %{buildroot}{%{_sysconfdir}/haproxy/conf.d,%{_localstatedir}/lib/haproxy}/
+
+# el10 delta: HAProxy's install-bin puts haproxy *and* everything listed in
+# EXTRA into SBINDIR.  Fedora's %%files nonetheless finds halog, iprange and
+# ip6range in %%{_bindir}, because Fedora has merged /usr/sbin into /usr/bin;
+# RHEL 10 has not (/usr/sbin is a real directory there), so they have to be
+# moved explicitly.  %%{_bindir} is also where the distribution's own haproxy
+# package installs them, so this keeps the drop-in replacement faithful.
+mkdir -p %{buildroot}%{_bindir}
+for tool in halog iprange ip6range; do
+    mv %{buildroot}%{_sbindir}/$tool %{buildroot}%{_bindir}/$tool
+done
 
 # OTel delta: reference OTel configuration.  Not wired up by default -- the
 # filter is inert until a proxy section names it -- so shipping these cannot

@@ -170,51 +170,44 @@ Containerfile                 UBI 10 builder image
 
 ## Verification status
 
-What has been checked directly, and what has not:
+**The whole chain has been built and tested** in a UBI 10 container:
+`opentelemetry-cpp-haproxy` → `opentelemetry-c-wrapper` → `haproxy-otel`, from
+the vendored sources, offline, producing installable RPMs.
 
-**Verified by running it**
+The installed binary reports the real SDK, not the dummy stand-in:
 
-* **A complete HAProxy 3.4 build with the filter integrated through
-  `EXTRA_MAKE` links successfully** — the whole mechanism this packaging rests
-  on, exercised end to end.
-* The resulting binary reports the filter, and all three of the spec's
-  `%check` assertions match its real output:
+```
+HAProxy version 3.4.3-80ea565fd-1.el10 2026/07/29
+Built with OpenTelemetry support (filter version 2.2.0, C++ version 1.28.0, C Wrapper version 3.3.0-1006).
+	[OTEL] opentelemetry
+```
 
-  ```
-  Built with OpenTelemetry support (filter version 2.2.0, C++ version none, C Wrapper version 3.3.0-0).
-  Available filters :
-  	[OTEL] opentelemetry
-  ```
+`scripts/smoke-test.sh` passes against the installed packages — all five checks,
+including that 118 shared libraries resolve through RUNPATH with no
+`LD_LIBRARY_PATH`, and that the shipped example configuration parses.
 
-  (`C++ version none` because that build deliberately used upstream's `dummy/`
-  stand-in — which is exactly the case the `%check` guard is written to reject,
-  so the guard is confirmed to fire.)
-* **The shipped example instrumentation config parses**
-  (`haproxy -c` exit 0), with a negative control confirming the filter's parser
-  really reads it: injecting a bogus keyword produces
-  `'this-keyword-does-not-exist' : unknown keyword` and exit 1.
-* The HAProxy compile matrix above — all 13 filter sources against four HAProxy
-  releases, real compiler runs.
-* All six opentelemetry-cpp patches apply cleanly to a pristine `v1.28.0` tree
-  with `patch -p1`.
-* All 17 pinned upstream tags exist.
-* Rocky/RHEL 10 ships haproxy 3.0.5 — from the CentOS Stream 10 `c10s` spec and
-  its changelog (release 8, August 2026, CVE backports only).
-* Every spec parses under `rpmspec` with `dist=.el10`; all shell scripts pass
-  `bash -n`; both CI files parse as YAML.
+The dependency graph came out clean: `haproxy-otel` requires only system
+libraries plus `opentelemetry-c-wrapper(x86-64) = 3.3.0`, provides
+`haproxy = 3.4.3-1.el10`, conflicts with `haproxy`, and no private soname
+leaks into anything's `Requires`.
 
-**Not verified here.** The environment had no access to Red Hat or Rocky package
-repositories or container registries, so no `rpmbuild` was run and the
-OpenTelemetry C++ SDK was not compiled. Specifically still unproven:
+Building it is what found the bugs. None was visible to `rpmspec`:
 
-* the SDK build itself (CMake options, the offline vendored-tree layout) and
-  the wrapper build against it;
-* the generated RPM dependency graph, including whether the provides/requires
-  filters for the private sonames are drawn tightly enough;
-* `scripts/smoke-test.sh` against installed RPMs.
+| Found | Fix |
+|---|---|
+| protobuf 35.1 declares Abseil as `absl`, so it looks for `absl-src`; upstream's monorepo script checks it out as `abseil-cpp-src` | map every vendored dependency with an explicit `FETCHCONTENT_SOURCE_DIR_*` |
+| `check-rpaths` rejected every library in the private prefix | clear `__brp_check_rpaths` in all three specs, not just one |
+| protoc and the upb generators installed into the prefix, unpackaged | removed in `%install` |
+| wrapper 3.3.0 does not compile against the monorepo's rapidyaml 0.15.2 | pin ryml to **0.10.0**, the only version satisfying both sides |
+| `find_package` resolved nlohmann-json against a *previous build of this package*, so the header was never shipped | add it to the `CMAKE_DISABLE_FIND_PACKAGE_*` list |
+| Fedora's `%files` finds halog/iprange in `%{_bindir}` only because Fedora merged `/usr/sbin` into `/usr/bin`; el10 has not | move them explicitly (`el10 delta:` in the spec) |
 
-These need a first CI run on a host with normal network access. The HAProxy
-half of the chain — the part specific to this filter, and the part the whole
-version question turns on — is the half that has been proven.
+**Caveat — the gRPC build.** What is verified above is `--without grpc`
+(OTLP/HTTP and OTLP/file). The spec still *defaults* to gRPC on, matching
+upstream, and that variant adds the vendored gRPC tree; see the build notes
+above for why it is much slower. If you need OTLP/gRPC, expect a long first
+build.
 
-[filter]: https://github.com/haproxytech/haproxy-opentelemetry
+Also still unverified: `aarch64` (only `x86_64` was built), and the CI
+pipelines themselves have not run — they drive the same `scripts/` that were
+used here, but on a runner rather than in this container.

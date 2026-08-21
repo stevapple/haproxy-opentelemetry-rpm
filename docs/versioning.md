@@ -59,7 +59,7 @@ for an offline build:
 | abseil-cpp | `20250512.1` |
 | protobuf | `v35.1` |
 | grpc | `v1.82.1` (with submodules) |
-| rapidyaml | `v0.15.2` (with recursive submodules) |
+| rapidyaml | `v0.10.0` (with recursive submodules) — **not** the monorepo's `v0.15.2`, see below |
 | curl | `curl-8_21_0` |
 | zlib | `v1.3.2` |
 | nlohmann/json | `v3.12.0` |
@@ -70,13 +70,55 @@ for an offline build:
 | googletest | `v1.17.0` |
 | benchmark | `v1.9.4` |
 
-All 13, plus the four primary components, were confirmed to exist upstream.
+All 13, plus the four primary components, were confirmed to exist upstream,
+and the whole chain has since been built from them.
 
 > The wrapper also carries per-library `*-install.sh` scripts with *older*
 > pins (abseil `20250127.1`, protobuf `29.5`, grpc `1.70.2`, ryml `0.10.0`,
 > curl `8_19_0`). Those belong to the piecemeal `build.sh` path. The monorepo
-> pins are the ones that matter here, because they are the set prepared for an
-> offline build, which is what an RPM build must be.
+> pins are otherwise the ones that matter here, because they are the set
+> prepared for an offline build — which is what an RPM build must be.
+>
+> **Except for rapidyaml.** The two disagree and the monorepo one does not
+> build: see below.
+
+### rapidyaml must be 0.10.0, not the monorepo's 0.15.2
+
+Building the wrapper against the monorepo's `v0.15.2` fails:
+
+```
+yaml.cpp:324:27: error: 'struct c4::yml::Callbacks' has no member named 'm_error'
+```
+
+rapidyaml 0.11 split `Callbacks`' single `m_error` into `m_error_basic`,
+`m_error_parse` and `m_error_visit`, with different signatures.
+opentelemetry-c-wrapper 3.3.0's `src/yaml.cpp` is written against the pre-0.11
+API, which is exactly what its own `rapidyaml-0.10.0-src-install.sh` pins.
+
+opentelemetry-cpp 1.28.0 supports both APIs behind `RYML_VERSION_MINOR` guards
+(`sdk/src/configuration/ryml_document.cc`), so **0.10.0 is the only version
+that satisfies both sides**, and it is what this packaging vendors.
+
+opentelemetry-cpp names its own ryml tag in `third_party_release`, parsed by
+`CMakeLists.txt` with an unconditional `set()` that `-D` cannot override, so
+`%prep` rewrites that one line to match what is actually vendored.
+
+### Every vendored dependency must be in the find_package disable list
+
+`CMAKE_DISABLE_FIND_PACKAGE_<name>=ON` is not optional hygiene here. CMake
+searches `CMAKE_INSTALL_PREFIX`, so with `nlohmann_json` missing from the list,
+`find_package()` resolved it against the copy a *previous build of this very
+package* had installed into `/opt/haproxy-otel`. The vendored source was then
+never built or installed, and the `-devel` package shipped SDK headers (Zipkin,
+Elasticsearch) that `#include <nlohmann/json.hpp>` without shipping that header.
+
+The configure output names the provider for each dependency, and is the quick
+way to check:
+
+```
+-- nlohmann-json: 3.12.0 (find_package)      <- wrong, hijacked
+-- nlohmann-json: 3.12.0 (fetch_repository)  <- right, vendored
+```
 
 ## The HAProxy version conflict
 
