@@ -16,6 +16,9 @@
 # See docs/versioning.md for where every pin below comes from.
 #
 
+# Vendored rapidyaml tag; see %%prep and docs/versioning.md.
+%global ryml_tag        v0.10.0
+
 %global otel_prefix     /opt/haproxy-otel
 %global otel_libdir     %{otel_prefix}/%{_lib}
 %global otel_includedir %{otel_prefix}/include
@@ -89,7 +92,7 @@ BuildRequires:  zlib-devel
 Provides:       bundled(opentelemetry-cpp) = %{version}
 Provides:       bundled(opentelemetry-proto) = 1.10.0
 Provides:       bundled(nlohmann-json) = 3.12.0
-Provides:       bundled(rapidyaml) = 0.15.2
+Provides:       bundled(rapidyaml) = 0.10.0
 # protobuf and Abseil are bundled regardless of the grpc bcond: the OTLP/HTTP
 # exporter needs opentelemetry-proto, which needs protobuf, which needs Abseil.
 # Only gRPC itself is optional.
@@ -126,6 +129,16 @@ OpenTelemetry C++ SDK used by the HAProxy OpenTelemetry filter.
 # vendored tree has its VCS metadata stripped, so %%autosetup's patch(1) is used
 # instead.  All six were verified to apply cleanly to a pristine v1.28.0 tree.
 %autosetup -p1 -n opentelemetry-cpp-monorepo-%{version}
+
+# The vendored rapidyaml is 0.10.0, not the v0.15.2 this release's
+# third_party_release names -- opentelemetry-c-wrapper 3.3.0 only compiles
+# against the pre-0.11 ryml callback API, and opentelemetry-cpp supports both
+# through RYML_VERSION_MINOR guards.  The compile guards read ryml's own
+# headers and are therefore already correct; this keeps the version CMake
+# reports for the dependency honest as well, since the file is parsed with an
+# unconditional set() that a -D on the command line cannot override.
+sed -i 's/^ryml=.*/ryml=%{ryml_tag}/' third_party_release
+grep -q '^ryml=%{ryml_tag}$' third_party_release
 
 %build
 # The flags below are a transcription of upstream's
