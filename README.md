@@ -218,6 +218,22 @@ sizes for the default build:
 
 The SRPM for the SDK is ~96 MB, because the vendored source tree is inside it.
 
-Still unverified: `aarch64` (only `x86_64` was built), and the CI pipelines
-themselves have not run — they drive the same `scripts/` used here, but on a
-runner rather than in this container.
+**The GitHub Actions pipeline is verified green**, on the gRPC default: lint,
+the full three-package chain, the smoke test and artifact upload all pass on a
+stock `ubuntu-latest` runner using the UBI 10 container. The package build leg
+takes ~69 minutes; the vendored tree is assembled in ~1 minute on a cache miss
+and is cached thereafter.
+
+Two things to know about that pipeline:
+
+* The uploaded artifact is ~408 MB, because it includes the debuginfo packages
+  and the ~96 MB SRPM. Narrow the `Collect RPMs` step if you only want the
+  installable binaries.
+* `concurrency.cancel-in-progress` is on, so a second push cancels a build in
+  flight. With a ~70 minute build, a burst of commits means no run finishes —
+  consider exempting the build job, or restricting the workflow to pull
+  requests and tags.
+
+Still unverified: `aarch64` (only `x86_64` has been built), and the Woodpecker
+pipeline has not been run — it drives the same `scripts/` as the GitHub
+Actions one, which has.
