@@ -231,26 +231,19 @@ grep -q '^ryml=%{ryml_tag}$' third_party_release
 %install
 %cmake_install
 
-# rapidyaml and c4core install into <prefix>/lib even where the platform libdir
-# is lib64; upstream's install script works around the same bug.  Fold them
-# back into the real libdir and fix the paths recorded in the CMake package
-# files.
+# Several of the vendored dependencies install into <prefix>/lib even where the
+# platform libdir is lib64 -- rapidyaml and c4core always, gRPC and protobuf
+# when they are built.  Upstream's install script works around the same bug.
+# Fold whatever landed there into the real libdir, and fix the paths recorded
+# in the CMake package and pkg-config files.
+#
+# Only regular files are rewritten: gRPC installs a cmake/grpc/modules/
+# directory, and sed(1) fails on a directory rather than skipping it.
 if [ "%{_lib}" != "lib" ] && [ -d %{buildroot}%{otel_prefix}/lib ]; then
-    mkdir -p %{buildroot}%{otel_libdir}/cmake %{buildroot}%{otel_libdir}/pkgconfig
-    for f in %{buildroot}%{otel_prefix}/lib/cmake/*/*; do
-        [ -e "$f" ] || continue
-        sed -i 's#/lib/#/%{_lib}/#g' "$f"
-    done
-    for d in %{buildroot}%{otel_prefix}/lib/cmake/*; do
-        [ -e "$d" ] || continue
-        cp -a "$d" %{buildroot}%{otel_libdir}/cmake/
-    done
-    for f in %{buildroot}%{otel_prefix}/lib/pkgconfig/*; do
-        [ -e "$f" ] || continue
-        cp -a "$f" %{buildroot}%{otel_libdir}/pkgconfig/
-    done
-    find %{buildroot}%{otel_prefix}/lib -maxdepth 1 \( -name '*.so*' -o -name '*.a' \) \
-        -exec cp -a {} %{buildroot}%{otel_libdir}/ \;
+    find %{buildroot}%{otel_prefix}/lib -type f \( -name '*.cmake' -o -name '*.pc' \) \
+        -exec sed -i 's#/lib/#/%{_lib}/#g' {} +
+    mkdir -p %{buildroot}%{otel_libdir}
+    cp -a %{buildroot}%{otel_prefix}/lib/. %{buildroot}%{otel_libdir}/
     rm -rf %{buildroot}%{otel_prefix}/lib
 fi
 

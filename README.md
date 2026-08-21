@@ -103,9 +103,10 @@ Two things worth knowing before you start:
   script is a transcription of upstream's own `opentelemetry-cpp-monorepo.sh`
   and produces one tarball the spec can consume offline. CI caches it on the
   hash of `versions.env`.
-* **The SDK build is the long pole.** gRPC + protobuf + Abseil dominate it.
-  Pass `RPM_WITH="--without grpc"` to drop the OTLP/gRPC exporter and those
-  three trees with it; OTLP/HTTP and OTLP/file keep working.
+* **The SDK build is the long pole**, and gRPC dominates it. Pass
+  `RPM_WITH="--without grpc"` to drop the OTLP/gRPC exporter and the vendored
+  gRPC tree; OTLP/HTTP and OTLP/file keep working. protobuf and Abseil are
+  built either way, because OTLP/HTTP needs opentelemetry-proto.
 
 ## CI
 
@@ -201,13 +202,22 @@ Building it is what found the bugs. None was visible to `rpmspec`:
 | wrapper 3.3.0 does not compile against the monorepo's rapidyaml 0.15.2 | pin ryml to **0.10.0**, the only version satisfying both sides |
 | `find_package` resolved nlohmann-json against a *previous build of this package*, so the header was never shipped | add it to the `CMAKE_DISABLE_FIND_PACKAGE_*` list |
 | Fedora's `%files` finds halog/iprange in `%{_bindir}` only because Fedora merged `/usr/sbin` into `/usr/bin`; el10 has not | move them explicitly (`el10 delta:` in the spec) |
+| gRPC installs a `cmake/grpc/modules/` **directory**, which the lib→lib64 fixup fed to `sed -i` | rewrite the fixup to touch regular files only |
 
-**Caveat — the gRPC build.** What is verified above is `--without grpc`
-(OTLP/HTTP and OTLP/file). The spec still *defaults* to gRPC on, matching
-upstream, and that variant adds the vendored gRPC tree; see the build notes
-above for why it is much slower. If you need OTLP/gRPC, expect a long first
-build.
+**Both build variants are verified.** The default (OTLP/gRPC on, matching
+upstream) and `--without grpc` were each built and smoke-tested. The default
+ships the OTLP/gRPC exporter and 64 gRPC-related libraries in the private
+prefix; `--without grpc` drops them and is much faster to build. Installed
+sizes for the default build:
 
-Also still unverified: `aarch64` (only `x86_64` was built), and the CI
-pipelines themselves have not run — they drive the same `scripts/` that were
-used here, but on a runner rather than in this container.
+| Package | Installed |
+|---|---|
+| `opentelemetry-cpp-haproxy` | 55 MB |
+| `opentelemetry-c-wrapper` | 0.8 MB |
+| `haproxy-otel` | 12 MB |
+
+The SRPM for the SDK is ~96 MB, because the vendored source tree is inside it.
+
+Still unverified: `aarch64` (only `x86_64` was built), and the CI pipelines
+themselves have not run — they drive the same `scripts/` used here, but on a
+runner rather than in this container.
