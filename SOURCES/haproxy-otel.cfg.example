@@ -1,0 +1,104 @@
+# Reference instrumentation for the HAProxy OpenTelemetry filter.
+#
+# Nothing here takes effect until a proxy section references the filter, so the
+# file is inert as installed.  To trace a frontend, add to haproxy.cfg:
+#
+#     frontend my-frontend
+#         mode http
+#         filter opentelemetry id otel config /etc/haproxy/otel.cfg
+#
+# The section name below ("otel") must match the filter's id.  "config" points
+# at the SDK configuration -- exporters, samplers, resources -- in otel.yml.
+#
+# Verify the filter is compiled in:   haproxy -vv | grep -i opentelemetry
+# Inspect or toggle it at runtime:    echo "otel status" | socat stdio /var/lib/haproxy/stats
+#
+# Full grammar: /usr/share/doc/haproxy-otel/README-configuration
+
+[otel]
+    otel-instrumentation instrumentation
+        # SDK configuration file, and the section within it to use.
+        config /etc/haproxy/otel.yml default
+
+        # Share of streams to instrument, 0.0 - 100.0.  Lower this first if
+        # the filter shows up in latency profiles.
+        rate-limit 100.0
+
+        # Stay quiet about ordinary traffic.
+        option dontlog-normal
+
+        # Soft errors: a telemetry failure must not take the proxy down.
+        # Switch to "option hard-errors" while debugging a configuration.
+        no option hard-errors
+
+        # Start enabled; toggle at runtime with the "otel" CLI commands.
+        no option disabled
+
+        scopes on_stream_start
+        scopes on_stream_stop
+        scopes client_session_start
+        scopes frontend_http_request
+        scopes backend_http_request
+        scopes http_end_request
+        scopes server_session_start
+        scopes http_wait_response
+        scopes http_headers_response
+        scopes http_end_response
+        scopes server_session_end
+        scopes client_session_end
+        scopes server_unavailable
+
+    # Root span for the whole stream, plus a couple of counters.  Uncomment
+    # the "extract" line to continue a trace started upstream instead of
+    # beginning a new one.
+    otel-scope on_stream_start
+#       extract "otel-ctx" use-headers
+        span "HAProxy session" root
+            attribute "http.request.method" method
+            attribute "url.path"            path
+            attribute "client.address"      src
+        instrument udcnt_int "haproxy.sessions.active" desc "Active sessions" value int(1) unit "{session}"
+
+    # finish * closes every span still open on the stream, so a request that
+    # ends early cannot leak an unterminated span.
+    otel-scope on_stream_stop
+        finish *
+
+    otel-scope client_session_start
+        span "Client session" parent "HAProxy session"
+
+    otel-scope frontend_http_request
+        span "Frontend HTTP request" parent "Client session"
+            attribute "server.address" req.hdr("host")
+
+    otel-scope backend_http_request
+        span "Backend HTTP request" parent "Frontend HTTP request"
+
+    otel-scope http_end_request
+        finish "Frontend HTTP request"
+
+    otel-scope server_session_start
+        span "Server session" parent "HAProxy session"
+            attribute "server.name" srv_name
+
+    otel-scope http_wait_response
+        span "Wait for response" parent "Server session"
+
+    otel-scope http_headers_response
+        span "HTTP response" parent "Server session"
+            attribute "http.response.status_code" status
+            status "error" str("http.status_code: ") status if { status ge 500 }
+
+    otel-scope http_end_response
+        finish "HTTP response" "Wait for response" "Backend HTTP request"
+
+    otel-scope server_session_end
+        finish "Server session"
+
+    otel-scope client_session_end
+        finish "Client session"
+
+    otel-scope server_unavailable
+        span "Server unavailable" parent "HAProxy session"
+            event "server_unavailable" "error" str("no server available for ") be_name
+        finish "Server unavailable"

@@ -1,0 +1,65 @@
+# Woodpecker CI pipeline for the haproxy-otel package set.
+#
+# Mirrors .github/workflows/build.yml step for step; both drive the same
+# scripts/ so the two cannot diverge in what they actually build.
+#
+# The vendored opentelemetry-cpp tree is expensive to assemble, so it is kept
+# in a cache volume keyed on versions.env.  Woodpecker has no built-in cache
+# action, so this uses a host/volume mount declared on the step.
+
+when:
+  - event: [push, pull_request, manual, tag]
+
+variables:
+  - &ubi_image registry.access.redhat.com/ubi10/ubi:latest
+
+steps:
+  lint:
+    image: *ubi_image
+    commands:
+      - dnf -y install rpm-build rpmdevtools rpmlint make git
+      - make lint
+
+  vendor:
+    image: *ubi_image
+    # Assembling the tree needs network but no build environment; keeping it in
+    # its own step means a cache hit skips a container full of -devel packages.
+    commands:
+      - dnf -y install git zstd tar findutils
+      - |
+        . ./versions.env
+        cached="/cache/opentelemetry-cpp-monorepo-$${OTELCPP_VERSION}.tar.zst"
+        mkdir -p SOURCES /cache
+        if [ -s "$$cached" ]; then
+          echo "==> cache hit: $$cached"
+          cp -p "$$cached" SOURCES/
+        else
+          ./scripts/vendor-otelcpp.sh
+          cp -p "SOURCES/opentelemetry-cpp-monorepo-$${OTELCPP_VERSION}.tar.zst" "$$cached"
+        fi
+    volumes:
+      - /var/lib/woodpecker/cache/haproxy-otel:/cache
+
+  build:
+    image: *ubi_image
+    commands:
+      - ./scripts/setup-buildenv.sh
+      - ./scripts/fetch-sources.sh
+      - ./scripts/build-all.sh all
+      - ./scripts/smoke-test.sh
+      - mkdir -p artifacts
+      - find rpmbuild/RPMS rpmbuild/SRPMS -name '*.rpm' -exec cp -t artifacts {} +
+      - ls -la artifacts
+    depends_on: [lint, vendor]
+
+  publish:
+    image: woodpeckerci/plugin-release:latest
+    settings:
+      api_key:
+        from_secret: forge_token
+      files: artifacts/*.rpm
+      title: ${CI_COMMIT_TAG}
+    depends_on: [build]
+    when:
+      - event: tag
+        ref: refs/tags/v*

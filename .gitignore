@@ -1,0 +1,8 @@
+# Build trees
+/rpmbuild/
+/artifacts/
+
+# Downloaded / assembled sources (reproduced by scripts/)
+SOURCES/*.tar.gz
+SOURCES/*.tar.zst
+SOURCES/*.part

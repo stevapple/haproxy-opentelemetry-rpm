@@ -1,0 +1,109 @@
+name: build
+
+# Builds the three-package chain inside UBI 10 and smoke-tests the result.
+#
+# The vendored opentelemetry-cpp tree is expensive to assemble and never
+# changes unless versions.env does, so it is cached on that file's hash.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint specs
+    runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi10/ubi:latest
+    steps:
+      # actions/checkout needs git and tar inside the container.
+      - name: Install tooling
+        run: dnf -y install git tar rpm-build rpmdevtools rpmlint make
+
+      - uses: actions/checkout@v4
+
+      - name: Parse every spec
+        run: make lint
+
+  build:
+    name: build RPMs
+    runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi10/ubi:latest
+      # The build installs the packages it produces so the next spec can
+      # build-require them.
+      options: --user root
+    steps:
+      - name: Install git before checkout
+        run: dnf -y install git tar
+
+      - uses: actions/checkout@v4
+
+      - name: Read pinned versions
+        id: versions
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Set up build environment
+        run: ./scripts/setup-buildenv.sh
+
+      - name: Cache vendored opentelemetry-cpp tree
+        id: vendor-cache
+        uses: actions/cache@v4
+        with:
+          path: SOURCES/opentelemetry-cpp-monorepo-*.tar.zst
+          key: otelcpp-vendor-${{ hashFiles('versions.env', 'scripts/vendor-otelcpp.sh') }}
+
+      - name: Assemble vendored opentelemetry-cpp tree
+        if: steps.vendor-cache.outputs.cache-hit != 'true'
+        run: ./scripts/vendor-otelcpp.sh
+
+      - name: Fetch upstream release tarballs
+        run: ./scripts/fetch-sources.sh
+
+      - name: Build all packages
+        run: ./scripts/build-all.sh all
+
+      - name: Smoke-test the installed binary
+        run: ./scripts/smoke-test.sh
+
+      - name: Collect RPMs
+        run: |
+          mkdir -p artifacts
+          find rpmbuild/RPMS rpmbuild/SRPMS -name '*.rpm' -exec cp -t artifacts {} +
+          ls -la artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpms-el10-x86_64
+          path: artifacts/*.rpm
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rpms-el10-x86_64
+          path: artifacts
+
+      - name: Attach RPMs to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.rpm
+          fail_on_unmatched_files: true

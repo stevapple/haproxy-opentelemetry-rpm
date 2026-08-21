@@ -1,0 +1,103 @@
+# Reference OpenTelemetry SDK configuration for the HAProxy OTel filter.
+#
+# This file configures the SDK itself -- exporters, processors, samplers and
+# resource attributes.  What HAProxy actually instruments is defined separately
+# in otel.cfg.example.
+#
+# Referenced from otel.cfg via:   config /etc/haproxy/otel.yml default
+#
+# Defaults here assume an OpenTelemetry Collector listening on localhost.
+# Adjust the endpoints, then set service.name to something meaningful.
+
+exporters:
+  exporter_traces:
+    type:                        otlp_http
+    thread_name:                 "OTLP/HTTP trace"
+    endpoint:                    "http://localhost:4318/v1/traces"
+    content_type:                json
+    timeout:                     10
+    max_concurrent_requests:     64
+    max_requests_per_connection: 8
+
+  exporter_metrics:
+    type:                        otlp_http
+    thread_name:                 "OTLP/HTTP metr"
+    endpoint:                    "http://localhost:4318/v1/metrics"
+    content_type:                json
+    timeout:                     10
+    max_concurrent_requests:     64
+    max_requests_per_connection: 8
+
+  exporter_logs:
+    type:                        otlp_http
+    thread_name:                 "OTLP/HTTP logs"
+    endpoint:                    "http://localhost:4318/v1/logs"
+    content_type:                json
+    timeout:                     10
+    max_concurrent_requests:     64
+    max_requests_per_connection: 8
+
+readers:
+  reader_metrics:
+    thread_name:     "reader metr"
+    export_interval: 10000
+    export_timeout:  5000
+
+samplers:
+  # parent_based honours an upstream sampling decision and falls back to
+  # always_on. Use trace_id_ratio_based with a ratio to sample a fraction.
+  sampler_traces:
+    type:     parent_based
+    delegate: always_on
+
+processors:
+  processor_traces:
+    type:                  batch
+    thread_name:           "proc/batch trac"
+    max_queue_size:        2048
+    schedule_delay:        5000
+    max_export_batch_size: 512
+
+  processor_logs:
+    type:                  batch
+    thread_name:           "proc/batch logs"
+    max_queue_size:        2048
+    schedule_delay:        5000
+    max_export_batch_size: 512
+
+providers:
+  provider_traces:
+    resources:
+      - service.name:      "haproxy"
+      - service.namespace: "edge"
+  provider_metrics:
+    resources:
+      - service.name:      "haproxy"
+      - service.namespace: "edge"
+  provider_logs:
+    resources:
+      - service.name:      "haproxy"
+      - service.namespace: "edge"
+
+signals:
+  traces:
+    default:
+      scope_name: "HAProxy OTEL - traces"
+      exporters:  exporter_traces
+      samplers:   sampler_traces
+      processors: processor_traces
+      providers:  provider_traces
+
+  metrics:
+    default:
+      scope_name: "HAProxy OTEL - metrics"
+      exporters:  exporter_metrics
+      readers:    reader_metrics
+      providers:  provider_metrics
+
+  logs:
+    default:
+      scope_name: "HAProxy OTEL - logs"
+      exporters:  exporter_logs
+      processors: processor_logs
+      providers:  provider_logs
