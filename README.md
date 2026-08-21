@@ -35,11 +35,19 @@ Measured by compiling the filter's 13 sources against each release's headers:
 (Upstream's README says "3.2 onward"; the code disagrees. Full evidence and
 method: [`docs/versioning.md`](docs/versioning.md).)
 
-So `haproxy-otel` is built on **HAProxy 3.4.3** — the lowest series that works,
-and the version RHEL 11 ships, so it is a release with a distribution track
-record rather than an arbitrary tarball. Everything else is kept faithful to
-Rocky 10: the same `USE_*` feature flags as the distro package, the same paths,
-unit file, sysusers, tmpfiles, logrotate and sysconfig.
+So `haproxy-otel` is built on **HAProxy 3.4.3**, and rather than hand-rolling
+that, the spec is a **fork of the Fedora `haproxy` package** — which is already
+at exactly 3.4.3-1, and is also what RHEL 11 ships. Forking means the package
+inherits Fedora's build flags, file layout, scriptlets and future fixes; the
+entire delta is marked with `OTel delta:` comments, so rebasing onto a newer
+Fedora haproxy is a matter of re-applying those hunks.
+
+    upstream: https://src.fedoraproject.org/rpms/haproxy (rawhide, 11852b3)
+
+That also corrected two stale build flags an earlier hand-written version of
+this spec carried over from the RHEL 10 package: `USE_SLZ=1` (default-on since
+3.4) and `USE_SYSTEMD=1` (gone — HAProxy has implemented `sd_notify` natively
+since 3.1).
 
 The version is one knob (`HAPROXY_VERSION` in `versions.env`). The spec checks
 the two real requirements in `%prep` rather than comparing version strings, so
@@ -51,11 +59,16 @@ quietly shipping a haproxy with no filter in it.
 
 Three packages, in dependency order:
 
-| Package | Version | Contents |
-|---|---|---|
-| `opentelemetry-cpp-haproxy` | 1.28.0 | OpenTelemetry C++ SDK, patched, ABI v2, private prefix |
-| `opentelemetry-c-wrapper` | 3.3.0 | HAProxy's C API over that SDK |
-| `haproxy-otel` | 3.4.3 | HAProxy with the OTel filter 2.2.0 compiled in |
+| Package | Version | Forked from | Contents |
+|---|---|---|---|
+| `opentelemetry-cpp-haproxy` | 1.28.0 | — (Fedora has no such package) | OpenTelemetry C++ SDK, patched, ABI v2, private prefix |
+| `opentelemetry-c-wrapper` | 3.3.0 | — | HAProxy's C API over that SDK |
+| `haproxy-otel` | 3.4.3 | Fedora `haproxy` (rawhide) | HAProxy with the OTel filter 2.2.0 compiled in |
+
+Fedora packages neither `opentelemetry-cpp` nor the HAProxy C wrapper (checked
+against the Fedora package index), so those two specs have no upstream to fork;
+they follow Fedora conventions instead — `%cmake`/`%cmake_build`/`%cmake_install`,
+`%autosetup`, `%bcond`, and `Provides: bundled(...)` for every vendored tree.
 
 The SDK and wrapper install under `/opt/haproxy-otel` and are reached through
 RUNPATH. That is deliberate: this SDK build carries upstream's mandatory patch

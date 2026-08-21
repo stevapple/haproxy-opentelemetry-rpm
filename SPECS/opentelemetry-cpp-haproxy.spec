@@ -20,10 +20,13 @@
 %global otel_libdir     %{otel_prefix}/%{_lib}
 %global otel_includedir %{otel_prefix}/include
 
-# Build the OTLP/gRPC exporter.  Turning this off drops the vendored gRPC,
-# protobuf and Abseil trees and cuts the build time by roughly an order of
-# magnitude, at the cost of losing the OTLP/gRPC transport.  OTLP/HTTP and
-# OTLP/file keep working either way.
+# Build the OTLP/gRPC exporter.  Turning this off drops the vendored gRPC tree
+# -- by far the longest part of the build -- at the cost of losing the OTLP/gRPC
+# transport.  OTLP/HTTP and OTLP/file keep working either way.  protobuf and
+# Abseil are built regardless, because OTLP/HTTP needs opentelemetry-proto.
+#
+# find_package() stays disabled for every vendored dependency in both cases, so
+# a package installed on the build host can never be substituted for a pin.
 %bcond_without grpc
 
 # The private libraries live outside the dynamic linker's search path and are
@@ -80,10 +83,13 @@ Provides:       bundled(opentelemetry-cpp) = %{version}
 Provides:       bundled(opentelemetry-proto) = 1.10.0
 Provides:       bundled(nlohmann-json) = 3.12.0
 Provides:       bundled(rapidyaml) = 0.15.2
-%if %{with grpc}
-Provides:       bundled(grpc) = 1.82.1
+# protobuf and Abseil are bundled regardless of the grpc bcond: the OTLP/HTTP
+# exporter needs opentelemetry-proto, which needs protobuf, which needs Abseil.
+# Only gRPC itself is optional.
 Provides:       bundled(protobuf) = 35.1
 Provides:       bundled(abseil-cpp) = 20250512.1
+%if %{with grpc}
+Provides:       bundled(grpc) = 1.82.1
 %endif
 
 %description
@@ -109,22 +115,12 @@ Headers, pkg-config files and CMake package files for the private
 OpenTelemetry C++ SDK used by the HAProxy OpenTelemetry filter.
 
 %prep
-%setup -q -n opentelemetry-cpp-monorepo-%{version}
-
-# Upstream applies these with `git apply` from a git checkout; the vendored
-# tree has its VCS metadata stripped, so plain patch(1) is used instead.  Both
-# were verified to apply cleanly to a pristine v1.28.0 tree.
-%patch -P 1 -p1
-%patch -P 2 -p1
-%patch -P 3 -p1
-%patch -P 4 -p1
-%patch -P 5 -p1
-%patch -P 6 -p1
+# Upstream applies the patch series with `git apply` from a git checkout; the
+# vendored tree has its VCS metadata stripped, so %%autosetup's patch(1) is used
+# instead.  All six were verified to apply cleanly to a pristine v1.28.0 tree.
+%autosetup -p1 -n opentelemetry-cpp-monorepo-%{version}
 
 %build
-mkdir -p build
-cd build
-
 # The flags below are a transcription of upstream's
 # opentelemetry-cpp-1.28.0-install.sh, with three deliberate deviations:
 #
@@ -135,29 +131,45 @@ cd build
 #     the same via the .monorepo marker in common.sh) so that a package
 #     installed on the build host cannot hijack the build.
 #
-cmake \
+# Each vendored dependency is mapped with an explicit FETCHCONTENT_SOURCE_DIR_*
+# rather than by letting FetchContent guess <binary dir>/_deps/<name>-src:
+#
+#   * %%cmake builds out of tree, so the default base dir is not where the
+#     vendored sources are; and
+#   * the directory names upstream's monorepo script uses do not all match the
+#     names the dependencies declare.  protobuf 35.1 declares Abseil as "absl"
+#     and so looks for "absl-src", while the monorepo script checks it out as
+#     "abseil-cpp-src".  Relying on the convention fails the configure step with
+#     "Cannot find abseil-cpp dependency that's needed to build protobuf".
+#
+# FETCHCONTENT_FULLY_DISCONNECTED stays on as a guard: any dependency not
+# mapped above fails the build instead of silently reaching for the network,
+# which is what keeps this an offline build.
+#
+%cmake \
     -DCMAKE_INSTALL_PREFIX=%{otel_prefix} \
     -DCMAKE_INSTALL_LIBDIR=%{_lib} \
     -DCMAKE_INSTALL_INCLUDEDIR=include \
     -DCMAKE_INSTALL_RPATH=%{otel_libdir} \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_C_FLAGS="%{build_cflags}" \
-    -DCMAKE_CXX_FLAGS="%{build_cxxflags}" \
-    -DCMAKE_EXE_LINKER_FLAGS="%{build_ldflags}" \
-    -DCMAKE_SHARED_LINKER_FLAGS="%{build_ldflags}" \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-    -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
     -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+    -DFETCHCONTENT_SOURCE_DIR_ABSL="$PWD/build/_deps/abseil-cpp-src" \
+    -DFETCHCONTENT_SOURCE_DIR_PROTOBUF="$PWD/build/_deps/protobuf-src" \
+    -DFETCHCONTENT_SOURCE_DIR_RYML="$PWD/build/_deps/ryml-src" \
+    -DFETCHCONTENT_SOURCE_DIR_CURL="$PWD/build/_deps/curl-src" \
+    -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON="$PWD/third_party/nlohmann-json" \
+    -DFETCHCONTENT_SOURCE_DIR_OPENTELEMETRY-PROTO="$PWD/third_party/opentelemetry-proto" \
+%if %{with grpc}
+    -DFETCHCONTENT_SOURCE_DIR_GRPC="$PWD/build/_deps/grpc-src" \
+%endif
     -DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF \
     -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF \
     -DCMAKE_DISABLE_FIND_PACKAGE_ryml=ON \
-%if %{with grpc}
     -DCMAKE_DISABLE_FIND_PACKAGE_gRPC=ON \
     -DCMAKE_DISABLE_FIND_PACKAGE_Protobuf=ON \
     -DCMAKE_DISABLE_FIND_PACKAGE_absl=ON \
-%endif
     -DBUILD_PACKAGE=ON \
     -DCURL_LIBRARY=%{_libdir}/libcurl.so \
     -DZLIB_LIBRARY=%{_libdir}/libz.so \
@@ -182,14 +194,12 @@ cmake \
     -DWITH_EXAMPLES=OFF \
     -DWITH_FUNC_TESTS=OFF \
     -DBUILD_TESTING=OFF \
-    -DBUILD_SHARED_LIBS=ON \
-    ..
+    -DBUILD_SHARED_LIBS=ON
 
-%make_build
+%cmake_build
 
 %install
-cd build
-%make_install
+%cmake_install
 
 # rapidyaml and c4core install into <prefix>/lib even where the platform libdir
 # is lib64; upstream's install script works around the same bug.  Fold them

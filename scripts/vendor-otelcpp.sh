@@ -30,6 +30,10 @@ REPO_ROOT="$PWD"
 # shellcheck disable=SC1091
 . ./versions.env
 
+for tool in git zstd tar; do
+    command -v "$tool" >/dev/null || { echo "ERROR: $tool is required but not installed" >&2; exit 1; }
+done
+
 WORK="${WORK:-$(mktemp -d)}"
 OUT="${OUT:-$REPO_ROOT/SOURCES}"
 TREE="opentelemetry-cpp-monorepo-${OTELCPP_VERSION}"
@@ -103,7 +107,7 @@ echo "==> packing $TARBALL"
 mkdir -p "$OUT"
 tar --sort=name --owner=0 --group=0 --numeric-owner \
     --mtime="@0" \
-    -I 'zstd -19 -T0' -cf "$TARBALL" "$TREE"
+    -I 'zstd -12 -T0' -cf "$TARBALL" "$TREE"
 
 echo "==> done: $(du -h "$TARBALL" | cut -f1)  $TARBALL"
 sha256sum "$TARBALL"
